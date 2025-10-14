@@ -1,7 +1,5 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <limits.h>
-
 
 // --------------------------- 宏和结构体 ---------------------------
 
@@ -27,109 +25,6 @@ Edge edge_list[E_MAX]; // 存储从文件读取的所有边
 int degrees[N_MAX] = {0}; // 存储每个顶点的出度
 int max_node_id = -1; // 实际的顶点数 N = max_node_id + 1
 int num_edges = 0;      // 实际的边数 E
-
-// ========================
-// 2. 队列的数据结构定义 (用于 BFS)
-// ========================
-
-typedef struct QNode {
-    int data;
-    struct QNode* next;
-} QNode;
-
-typedef struct Queue {
-    QNode *front;
-    QNode *rear;
-} Queue;
-
-// ========================
-// 3. 辅助函数 (创建节点, 队列操作等)
-// ========================
-Queue* createQueue() {
-    Queue* q = (Queue*)malloc(sizeof(Queue));
-    if (q == NULL) { perror("malloc failed"); exit(EXIT_FAILURE); }
-    q->front = q->rear = NULL;
-    return q;
-}
-
-void enqueue(Queue* q, int value) {
-    QNode* newNode = (QNode*)malloc(sizeof(QNode));
-    if (newNode == NULL) { perror("malloc failed"); exit(EXIT_FAILURE); }
-    newNode->data = value;
-    newNode->next = NULL;
-    
-    if (q->rear == NULL) {
-        q->front = q->rear = newNode;
-        return;
-    }
-    
-    q->rear->next = newNode;
-    q->rear = newNode;
-}
-
-int dequeue(Queue* q) {
-    if (q->front == NULL)
-        return -1;
-
-    QNode* temp = q->front;
-    int value = temp->data;
-    q->front = q->front->next;
-    
-    if (q->front == NULL)
-        q->rear = NULL;
-
-    free(temp);
-    return value;
-}
-
-int isEmpty(Queue* q) {
-    return q->front == NULL;
-}
-
-/**
- * @brief 执行广度优先搜索 (BFS) 并计算最短距离。
- * @return int 返回目标节点的距离，如果不可达返回 -1。
- */
-int bfs_shortest_distance(int numVertices, int startNode, int targetNode, int* distances) {
-    // 检查起始和目标节点是否在图中存在
-    if (startNode >= numVertices || targetNode >= numVertices || startNode < 0 || targetNode < 0) {
-        fprintf(stderr, "Error: Start/Target user ID is outside the calculated graph range [0, %d].\n", numVertices - 1);
-        return -1;
-    }
-    
-    for (int i = 0; i < numVertices; i++) {
-        distances[i] = -1;
-    }
-
-    Queue* q = createQueue();
-    enqueue(q, startNode);
-    distances[startNode] = 0;
-
-    while (!isEmpty(q)) {
-        int currentNode = dequeue(q);
-
-        if (currentNode == targetNode) {
-            // 找到目标，释放队列并返回距离
-            // 注意: 完整的内存清理需要释放所有 QNode*，但这里从简
-            return distances[targetNode]; 
-        }
-
-        int start = ROW_PTRS[currentNode];
-        int end = ROW_PTRS[currentNode + 1];
-        
-        for (int i = start; i < end; i++) {
-            //printf("%d ", COL_INDS[i]);
-            int neighbor = COL_INDS[i];
-            if (distances[neighbor] == -1) {
-                distances[neighbor] = distances[currentNode] + 1;
-                enqueue(q, neighbor);
-            }
-        }
-    }
-
-    // 目标不可达
-    return -1;
-}
 
 // --------------------------- 函数：读取数据文件 ---------------------------
 
@@ -222,20 +117,22 @@ void build_csr(int N) {
     free(write_ptr);
 }
 
-// ========================
-// 5. 主程序
-// ========================
+// --------------------------- 主函数：测试 ---------------------------
 
-int main(int argc, char *argv[]) {
-    int startUser = 0; 
-    int targetUser = 10;
-
+int main() {
+    // 确保你的数据文件 'data_file.txt' 在程序目录下
     if (!read_data_file("facebook_combined.txt")) {
         return EXIT_FAILURE;
     }
-
+    
+    // N 是实际的顶点数 (例如：如果最大 ID 是 3，则 N=4 (0, 1, 2, 3))
     int N = max_node_id + 1;
 
+    printf("--- 读入统计 ---\n");
+    printf("顶点数 (N): %d\n", N);
+    printf("边数 (E): %d\n", num_edges);
+    
+    // 确保有足够的空间
     if (N > N_MAX || num_edges > E_MAX) {
         fprintf(stderr, "Error: Calculated size exceeds array limits.\n");
         return EXIT_FAILURE;
@@ -244,25 +141,33 @@ int main(int argc, char *argv[]) {
     // 构建 CSR
     build_csr(N);
 
-    // 3. 分配距离数组
-    int* distances = (int*)malloc(N * sizeof(int));
-    if (distances == NULL) { perror("malloc failed"); return 1; }
-
-    // 4. 执行 BFS 查找社交距离
-    printf("\n--- Shortest Distance Calculation ---\n");
-    printf("Finding distance from Mapped ID %d to Mapped ID %d...\n", startUser, targetUser);
+    // --- 打印 CSR 结果 ---
+    printf("\n--- CSR 结果 ---\n");
     
-    int distance = bfs_shortest_distance(N, startUser, targetUser, distances);
-
-    // 5. 输出结果
-    if (distance != -1) {
-        printf("\nRESULT: Social Distance (Shortest Path Length) is: %d\n", distance);
-    } else {
-        printf("\nRESULT: Mapped ID %d and Mapped ID %d are unreachable.\n", startUser, targetUser);
+    printf("ROW_PTRS (长度 %d): ", N + 1);
+    for (int i = 0; i <= N; i++) {
+        printf("%d ", ROW_PTRS[i]);
     }
-    
-    // 6. 清理内存
-    free(distances);
+    printf("\n");
 
-    return 0;
+    printf("COL_INDS (长度 %d): ", num_edges);
+    for (int i = 0; i < num_edges; i++) {
+        printf("%d ", COL_INDS[i]);
+    }
+    printf("\n");
+    
+    // --- 演示如何使用 CSR 查找邻居 ---
+    printf("\n--- 查找邻居演示 ---\n");
+    for (int u = 0; u < N; u++) {
+        int start = ROW_PTRS[u];
+        int end = ROW_PTRS[u + 1];
+        
+        printf("顶点 %d 的邻居: [", u);
+        for (int i = start; i < end; i++) {
+            printf("%d ", COL_INDS[i]);
+        }
+        printf("]\n");
+    }
+
+    return EXIT_SUCCESS;
 }
