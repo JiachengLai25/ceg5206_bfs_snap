@@ -2,7 +2,138 @@
 #include <stdlib.h>
 #include <limits.h>
 
+#include "bitset.h"
 
+// =========================================================
+// 辅助函数实现
+// =========================================================
+
+/**
+ * @brief 初始化 Bitset，所有位清零
+ * @param bs Bitset 结构体指针
+ */
+void bitset_init(bitset_t *bs) {
+    // 使用 memset 将整个数组清零
+    memset(bs->words, 0, NUM_WORDS * sizeof(bitset_word_t));
+}
+
+/**
+ * @brief 将 Bitset 的所有位设置为 1
+ * @param bs Bitset 结构体指针
+ */
+void bitset_set_all(bitset_t *bs) {
+    // 将所有存储单元设置为全 1
+    memset(bs->words, 0xFF, NUM_WORDS * sizeof(bitset_word_t));
+    
+    // 注意：如果 BITSET_SIZE 不是 WORD_SIZE 的整数倍，
+    // 最后一个 word 的多余位需要清零 (可选，取决于需求)
+    size_t unused_bits = NUM_WORDS * WORD_SIZE - BITSET_SIZE;
+    if (unused_bits > 0) {
+        // 创建一个用于清除多余位的掩码
+        bitset_word_t mask = ~((((bitset_word_t)1 << unused_bits) - 1) << (WORD_SIZE - unused_bits));
+        bs->words[NUM_WORDS - 1] &= mask;
+    }
+}
+
+/**
+ * @brief 将 Bitset 的所有位设置为 0
+ * @param bs Bitset 结构体指针
+ */
+void bitset_clear_all(bitset_t *bs) {
+    bitset_init(bs); // 和初始化功能相同
+}
+
+/**
+ * @brief 计算 Bitset 中设置为 1 的位数量（汉明重量）
+ * @param bs Bitset 结构体指针
+ * @return 1 的位数
+ */
+size_t bitset_count(const bitset_t *bs) {
+    size_t count = 0;
+    // 遍历每一个存储单元
+    for (size_t i = 0; i < NUM_WORDS; ++i) {
+        bitset_word_t word = bs->words[i];
+        
+        // 这是一个高效计算一个整数中 1 的位数（popcount）的循环
+        // 不同的编译器和 CPU 架构可能有更快的内置函数（如 GCC 的 __builtin_popcount）
+        while (word > 0) {
+            word &= (word - 1); // 清除最低位的 1
+            count++;
+        }
+    }
+    return count;
+}
+
+/**
+ * @brief 打印 Bitset 的内容 (仅打印 BITSET_SIZE 位)
+ * @param bs Bitset 结构体指针
+ */
+void bitset_print(const bitset_t *bs) {
+    // 从最高位打印到最低位，以匹配 std::bitset::to_string() 的阅读习惯
+    for (int i = BITSET_SIZE - 1; i >= 0; --i) {
+        if (BITSET_TEST(bs, i)) {
+            printf("1");
+        } else {
+            printf("0");
+        }
+        // 增加空格以分隔存储单元（可选）
+        if (i % WORD_SIZE == 0 && i != 0) {
+            printf(" ");
+        }
+    }
+    printf("\n");
+}
+
+int bitset_first(const bitset_t *bs) {
+    if (bs == NULL) {
+        return -1;
+    }
+
+    // 遍历存储位的每个 word
+    for (size_t i = 0; i < NUM_WORDS; ++i) {
+        bitset_word_t word = bs->words[i];
+
+        if (word != 0) {
+            // 找到了第一个非零的 word
+            
+            // 使用 GCC/Clang 内置函数：Count Trailing Zeros (计算末尾零的个数)
+            // __builtin_ctzll 适用于 64 位 (long long)
+            int bit_offset;
+            
+            #if defined(__GNUC__) || defined(__clang__)
+                // 推荐：使用内置函数，性能最高
+                bit_offset = __builtin_ctzll(word);
+            #else
+                // 备用方案：如果编译器不支持内置函数，需要手动实现或使用查找表
+                // 这是一个非常慢的通用实现，仅用于演示
+                bit_offset = 0;
+                while ((word & 1) == 0 && bit_offset < WORD_SIZE) {
+                    word >>= 1;
+                    bit_offset++;
+                }
+                if (bit_offset == WORD_SIZE) {
+                    // 理论上 word != 0，但为安全起见
+                    continue; 
+                }
+            #endif
+
+            // 计算该位在整个 bitset 中的全局索引
+            // 全局索引 = (当前 word 的起始索引) + (word 内部的偏移量)
+            int global_index = i * WORD_SIZE + bit_offset;
+
+            // 注意：您可能需要检查 global_index 是否超过了总位数 (如果 bitset 未满)
+            // if (global_index >= bs->total_bits) { continue; }
+
+            return global_index;
+        }
+    }
+
+    // 整个 bitset 中都没有位被设置
+    return -1;
+}
+
+#define CACHE_LINE_SIZE 64
+#define USING_SPARSE_QUEUE 1
 // --------------------------- 宏和结构体 ---------------------------
 
 // 假设图的最大顶点数 N_MAX
@@ -28,6 +159,8 @@ int degrees[N_MAX] = {0}; // 存储每个顶点的出度
 int max_node_id = -1; // 实际的顶点数 N = max_node_id + 1
 int num_edges = 0;      // 实际的边数 E
 
+
+bitset_t visited, current_frontier, next_frontier;
 // ========================
 // 2. 队列的数据结构定义 (用于 BFS)
 // ========================
@@ -37,10 +170,21 @@ typedef struct QNode {
     struct QNode* next;
 } QNode;
 
+#ifdef USING_SPARSE_QUEUE
+typedef struct Queue {
+    QNode *front; 
+    char pad1[CACHE_LINE_SIZE]; // 填充，确保 front 独占一个缓存行
+    QNode *rear;
+    char pad2[CACHE_LINE_SIZE]; // 填充，确保 rear 独占一个缓存行
+} Queue;
+
+#else
 typedef struct Queue {
     QNode *front;
     QNode *rear;
 } Queue;
+
+#endif
 
 // ========================
 // 3. 辅助函数 (创建节点, 队列操作等)
@@ -100,11 +244,68 @@ int bfs_shortest_distance(int numVertices, int startNode, int targetNode, int* d
     for (int i = 0; i < numVertices; i++) {
         distances[i] = -1;
     }
-
+#if 0
     Queue* q = createQueue();
     enqueue(q, startNode);
+#endif
     distances[startNode] = 0;
+    BITSET_SET(&visited, startNode); 
 
+    bitset_init(&current_frontier);
+    bitset_init(&next_frontier);
+    BITSET_SET(&current_frontier, startNode);
+
+    // 外部循环：控制层级推进 (Level Advancement)
+    while(1) // 可以用 while(true) 或 for(;;)
+    {
+        // 如果当前层为空，则搜索结束
+        if (bitset_count(&current_frontier) == 0) {
+            break; 
+        }
+        
+        // 内层循环：处理当前层的所有节点 (清空 current_frontier)
+        while(bitset_count(&current_frontier) != 0) 
+        {
+            int currentNode = bitset_first(&current_frontier);
+            
+            if (currentNode == targetNode) {
+                return distances[targetNode]; 
+            }
+
+            // ... 获取邻居 ...
+            int start = ROW_PTRS[currentNode];
+            int end = ROW_PTRS[currentNode + 1];
+
+            // 关键：从当前 Frontier 中移除该节点
+            BITSET_CLEAR(&current_frontier, currentNode); 
+            
+            for (int i = start; i < end; i++) {
+                int neighbor = COL_INDS[i];
+                
+                // 检查是否已访问 (需要实现并使用 BITSET_TEST(&visited, neighbor) 或检查 distances)
+                if (BITSET_TEST(&visited, neighbor) == 0) { 
+                    distances[neighbor] = distances[currentNode] + 1;
+                    // 同时标记为 visited，防止在同一层内被重复加入 next_frontier
+                    BITSET_SET(&visited, neighbor); 
+                    
+                    BITSET_SET(&next_frontier, neighbor);
+                }
+            }
+        }
+        
+        // --- 层级推进 (Layer Advancement) ---
+
+        // 1. 复制 next_frontier 的内容到 current_frontier
+        // 假设您已实现 BITSET_COPY
+        BITSET_COPY(&current_frontier, &next_frontier); 
+        
+        // 2. 清空 next_frontier，准备接收下一层节点
+        bitset_clear_all(&next_frontier);
+        
+        // 然后继续下一轮外层循环，处理新的 current_frontier
+    }
+
+#if 0
     while (!isEmpty(q)) {
         int currentNode = dequeue(q);
 
@@ -126,7 +327,7 @@ int bfs_shortest_distance(int numVertices, int startNode, int targetNode, int* d
             }
         }
     }
-
+#endif
     // 目标不可达
     return -1;
 }
@@ -263,6 +464,20 @@ int main(int argc, char *argv[]) {
     
     // 6. 清理内存
     free(distances);
+
+    bitset_t flags;
+    bitset_init(&flags); // 所有位初始化为 0
+
+    printf("1. 初始 Bitset (全 0):\n");
+    bitset_print(&flags);
+
+    // 2. 设置第 10 位和第 63 位 (假设 WORD_SIZE 是 32 或 64)
+    BITSET_SET(&flags, 10);
+    BITSET_SET(&flags, 63);
+    BITSET_SET(&flags, 255); // 最高位
+
+    printf("\n2. 设置位 10, 63, 255 后:\n");
+    bitset_print(&flags);
 
     return 0;
 }
