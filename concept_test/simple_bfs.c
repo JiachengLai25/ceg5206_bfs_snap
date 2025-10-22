@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <limits.h>
+#include <omp.h>  // 新增：OpenMP 支持
 
 #include "bitset.h"
 
@@ -249,24 +250,29 @@ int isEmpty(Queue* q) {
 
 // 圖結構：CSR (鄰居列表，無向圖雙向) - ROW_PTRS[numVertices+1], COL_INDS[2*|E|]
 
-int bfs_shortest_distance(int numVertices, int startNode, int targetNode, 
-                          int* distances) {  // 只需 CSR，無 CSC
+// 修改后的 BFS 主函数：添加 OpenMP 并行
+int bfs_shortest_distance(int numVertices, int startNode, int targetNode, int* distances) {
     if (startNode >= numVertices || targetNode >= numVertices || startNode < 0 || targetNode < 0) {
         fprintf(stderr, "Error: Start/Target user ID is outside the calculated graph range [0, %d].\n", numVertices - 1);
         return -1;
     }
     
-    int numEdges = ROW_PTRS[numVertices];  // 總邊數 (無向圖雙向計，|E| = 2 * undirected_edges)
+    int numEdges = ROW_PTRS[numVertices];  // 总边数 (无向图双向计)
     if (numEdges == 0) return -1;
     
-    // Push-Pull 閾值：活躍邊密度 > 0.05 切 Pull (可調)
+    // Push-Pull 阈值
     double threshold = 0.05;
     
-    for (int i = 0; i < numVertices; i++) {
-        distances[i] = -1;
+    // 初始化 distances 和 visited（串行）
+    #pragma omp parallel num_threads(4)  // 可动态设置线程数
+    {
+        #pragma omp for  // 并行初始化数组
+        for (int i = 0; i < numVertices; i++) {
+            distances[i] = -1;
+        }
     }
     distances[startNode] = 0;
-    BITSET_SET(&visited, startNode);  // 假設 visited 是 bitset_t visited;
+    BITSET_SET(&visited, startNode);
 
     bitset_init(&current_frontier);
     bitset_init(&next_frontier);
@@ -277,66 +283,90 @@ int bfs_shortest_distance(int numVertices, int startNode, int targetNode,
             break; 
         }
         
-        // 計算活躍邊密度：當前 frontier 節點的鄰居總數 / |E|
+        // 密度计算（串行，frontier 小）
         int active_edges = 0;
         int v = -1;
-        while ((v = bitset_next(&current_frontier, v, numVertices)) != -1) {  // 迭代 frontier
+        while ((v = bitset_next(&current_frontier, v, numVertices)) != -1) {
             active_edges += ROW_PTRS[v + 1] - ROW_PTRS[v];
         }
         double density = (double)active_edges / numEdges;
         
-        // 動態選擇模式
+        // 动态选择模式（并行内）
         if (density > threshold) {
             pull_mode(numVertices, &current_frontier, &next_frontier, distances, &visited, targetNode);
         } else {
             push_mode(numVertices, &current_frontier, &next_frontier, distances, &visited, targetNode);
         }
         
-        // 檢查目標
+        // 检查目标（串行）
         if (distances[targetNode] != -1 && BITSET_TEST(&visited, targetNode)) {
             return distances[targetNode];
         }
         
-        // 層級推進
-        BITSET_COPY(&current_frontier, &next_frontier); 
+        // 层级推进（串行，memcpy 安全）
+        BITSET_COPY(&current_frontier, &next_frontier);  // 假设已实现为 memcpy
         bitset_clear_all(&next_frontier);
     }
     return -1;
 }
 
-// Push 模式（原邏輯，簡化）
+// 修改：Push 模式 - 并行遍历 frontier 节点
 void push_mode(int numVertices, bitset_t* current_frontier, bitset_t* next_frontier, 
                int* distances, bitset_t* visited, int targetNode) {
-    int v = -1;
-    while ((v = bitset_next(current_frontier, v, numVertices)) != -1) {
-        BITSET_CLEAR(current_frontier, v);  // 移除已處理
-        
-        int start = ROW_PTRS[v];
-        int end = ROW_PTRS[v + 1];
-        for (int i = start; i < end; i++) {
-            int neigh = COL_INDS[i];
-            if (BITSET_TEST(visited, neigh) == 0) {
-                distances[neigh] = distances[v] + 1;
-                BITSET_SET(visited, neigh);
-                BITSET_SET(next_frontier, neigh);
+    // 并行：每个线程独立迭代部分 frontier（用 dynamic 调度负载均衡）
+    #pragma omp parallel num_threads(4)
+    {
+        int tid = omp_get_thread_num();
+        int v_local = -1;  // 线程本地起始点：从 tid 偏移，避免重叠
+        int step = omp_get_num_threads();
+        int start_v = tid;  // 简单分区（可优化为 work-stealing）
+
+        // 线程本地迭代 frontier（从 start_v 开始，跳步 step）
+        for (int offset = 0; offset < numVertices; offset += step) {
+            int candidate_v = start_v + offset;
+            if (candidate_v >= numVertices) break;
+            if (BITSET_TEST(current_frontier, candidate_v)) {
+                // 处理该 v
+                //BITSET_CLEAR(current_frontier, candidate_v);  // 原子清零（bitset 非原子，用 critical）
+                #pragma omp critical (clear_frontier)
+                {
+                    BITSET_CLEAR(current_frontier, candidate_v);
+                }
+                
+                int start = ROW_PTRS[candidate_v];
+                int end = ROW_PTRS[candidate_v + 1];
+                for (int i = start; i < end; i++) {
+                    int neigh = COL_INDS[i];
+                    if (BITSET_TEST(visited, neigh) == 0) {
+                        #pragma omp critical (update_node)
+                        {
+                            if (BITSET_TEST(visited, neigh) == 0) {  // 双查
+                                distances[neigh] = distances[candidate_v] + 1;
+                                BITSET_SET(visited, neigh);
+                                BITSET_SET(next_frontier, neigh);
+                            }
+                        }
+                    }
+                }
             }
         }
     }
 }
 
-// Pull 模式（使用相同鄰居列表，拉取檢查）
+// 修改：Pull 模式 - 并行遍历所有节点
 void pull_mode(int numVertices, bitset_t* current_frontier, bitset_t* next_frontier, 
                int* distances, bitset_t* visited, int targetNode) {
-    // 優化：可只遍歷潛在 v (e.g., 所有 current_frontier 的 neigh)，但這裡簡單遍歷所有未訪問
+    // 并行：直接 for 循环分区节点，高并行度
+    #pragma omp parallel for num_threads(4) schedule(dynamic)  // dynamic 均衡不均度
     for (int v = 0; v < numVertices; v++) {
-        if (distances[v] != -1) continue;  // 已訪問，跳過
+        if (distances[v] != -1) continue;  // 已访问，跳过（线程安全，读）
         
         int min_dist = -1;
         int start = ROW_PTRS[v];
         int end = ROW_PTRS[v + 1];
         for (int i = start; i < end; i++) {
-            int u = COL_INDS[i];  // u 是 v 的鄰居 (無向，等於入邊來源)
-            if (BITSET_TEST(current_frontier, u)) {  // u 在當前層
+            int u = COL_INDS[i];
+            if (BITSET_TEST(current_frontier, u)) {
                 int candidate = distances[u] + 1;
                 if (min_dist == -1 || candidate < min_dist) {
                     min_dist = candidate;
@@ -344,9 +374,14 @@ void pull_mode(int numVertices, bitset_t* current_frontier, bitset_t* next_front
             }
         }
         if (min_dist != -1) {
-            distances[v] = min_dist;
-            BITSET_SET(visited, v);
-            BITSET_SET(next_frontier, v);
+            #pragma omp critical (update_node_pull)
+            {
+                if (distances[v] == -1) {  // 双查避免丢失更新
+                    distances[v] = min_dist;
+                    BITSET_SET(visited, v);
+                    BITSET_SET(next_frontier, v);
+                }
+            }
         }
     }
 }
@@ -471,7 +506,9 @@ int main(int argc, char *argv[]) {
     // 4. 执行 BFS 查找社交距离
     printf("\n--- Shortest Distance Calculation ---\n");
     printf("Finding distance from Mapped ID %d to Mapped ID %d...\n", startUser, targetUser);
-    
+    // 执行前打印线程数
+    printf("Using %d OpenMP threads.\n", omp_get_max_threads());
+
     int distance = bfs_shortest_distance(N, startUser, targetUser, distances);
 
     // 5. 输出结果
