@@ -4,6 +4,10 @@
 
 #include "bitset.h"
 
+void push_mode(int numVertices, bitset_t* current_frontier, bitset_t* next_frontier, 
+               int* distances, bitset_t* visited, int targetNode);
+void pull_mode(int numVertices, bitset_t* current_frontier, bitset_t* next_frontier, 
+               int* distances, bitset_t* visited, int targetNode);
 // =========================================================
 // 辅助函数实现
 // =========================================================
@@ -132,6 +136,14 @@ int bitset_first(const bitset_t *bs) {
     return -1;
 }
 
+int bitset_next(bitset_t* bs, int prev, int numVertices) {
+    for (int i = prev + 1; i < numVertices; i++) {  // 直接用參數
+        if (BITSET_TEST(bs, i)) {
+            return i;
+        }
+    }
+    return -1;
+}
 #define CACHE_LINE_SIZE 64
 #define USING_SPARSE_QUEUE 1
 // --------------------------- 宏和结构体 ---------------------------
@@ -230,106 +242,113 @@ int isEmpty(Queue* q) {
     return q->front == NULL;
 }
 
-/**
- * @brief 执行广度优先搜索 (BFS) 并计算最短距离。
- * @return int 返回目标节点的距离，如果不可达返回 -1。
- */
-int bfs_shortest_distance(int numVertices, int startNode, int targetNode, int* distances) {
-    // 检查起始和目标节点是否在图中存在
+// 假設 bitset 操作：BITSET_SET(bs, idx), BITSET_CLEAR(bs, idx), BITSET_TEST(bs, idx)
+// BITSET_COPY(dst, src), bitset_clear_all(bs), bitset_count(bs), bitset_first(bs)
+// bitset_next(bs, prev) 返回下一個 set 位 (若無，需自實作；否則用 while + first/clear)
+// bitset_init(bs)
+
+// 圖結構：CSR (鄰居列表，無向圖雙向) - ROW_PTRS[numVertices+1], COL_INDS[2*|E|]
+
+int bfs_shortest_distance(int numVertices, int startNode, int targetNode, 
+                          int* distances) {  // 只需 CSR，無 CSC
     if (startNode >= numVertices || targetNode >= numVertices || startNode < 0 || targetNode < 0) {
         fprintf(stderr, "Error: Start/Target user ID is outside the calculated graph range [0, %d].\n", numVertices - 1);
         return -1;
     }
     
+    int numEdges = ROW_PTRS[numVertices];  // 總邊數 (無向圖雙向計，|E| = 2 * undirected_edges)
+    if (numEdges == 0) return -1;
+    
+    // Push-Pull 閾值：活躍邊密度 > 0.05 切 Pull (可調)
+    double threshold = 0.05;
+    
     for (int i = 0; i < numVertices; i++) {
         distances[i] = -1;
     }
-#if 0
-    Queue* q = createQueue();
-    enqueue(q, startNode);
-#endif
     distances[startNode] = 0;
-    BITSET_SET(&visited, startNode); 
+    BITSET_SET(&visited, startNode);  // 假設 visited 是 bitset_t visited;
 
     bitset_init(&current_frontier);
     bitset_init(&next_frontier);
     BITSET_SET(&current_frontier, startNode);
 
-    // 外部循环：控制层级推进 (Level Advancement)
-    while(1) // 可以用 while(true) 或 for(;;)
-    {
-        // 如果当前层为空，则搜索结束
+    while (1) {
         if (bitset_count(&current_frontier) == 0) {
             break; 
         }
         
-        // 内层循环：处理当前层的所有节点 (清空 current_frontier)
-        while(bitset_count(&current_frontier) != 0) 
-        {
-            int currentNode = bitset_first(&current_frontier);
-            
-            if (currentNode == targetNode) {
-                return distances[targetNode]; 
+        // 計算活躍邊密度：當前 frontier 節點的鄰居總數 / |E|
+        int active_edges = 0;
+        int v = -1;
+        while ((v = bitset_next(&current_frontier, v, numVertices)) != -1) {  // 迭代 frontier
+            active_edges += ROW_PTRS[v + 1] - ROW_PTRS[v];
+        }
+        double density = (double)active_edges / numEdges;
+        
+        // 動態選擇模式
+        if (density > threshold) {
+            pull_mode(numVertices, &current_frontier, &next_frontier, distances, &visited, targetNode);
+        } else {
+            push_mode(numVertices, &current_frontier, &next_frontier, distances, &visited, targetNode);
+        }
+        
+        // 檢查目標
+        if (distances[targetNode] != -1 && BITSET_TEST(&visited, targetNode)) {
+            return distances[targetNode];
+        }
+        
+        // 層級推進
+        BITSET_COPY(&current_frontier, &next_frontier); 
+        bitset_clear_all(&next_frontier);
+    }
+    return -1;
+}
+
+// Push 模式（原邏輯，簡化）
+void push_mode(int numVertices, bitset_t* current_frontier, bitset_t* next_frontier, 
+               int* distances, bitset_t* visited, int targetNode) {
+    int v = -1;
+    while ((v = bitset_next(current_frontier, v, numVertices)) != -1) {
+        BITSET_CLEAR(current_frontier, v);  // 移除已處理
+        
+        int start = ROW_PTRS[v];
+        int end = ROW_PTRS[v + 1];
+        for (int i = start; i < end; i++) {
+            int neigh = COL_INDS[i];
+            if (BITSET_TEST(visited, neigh) == 0) {
+                distances[neigh] = distances[v] + 1;
+                BITSET_SET(visited, neigh);
+                BITSET_SET(next_frontier, neigh);
             }
+        }
+    }
+}
 
-            // ... 获取邻居 ...
-            int start = ROW_PTRS[currentNode];
-            int end = ROW_PTRS[currentNode + 1];
-
-            // 关键：从当前 Frontier 中移除该节点
-            BITSET_CLEAR(&current_frontier, currentNode); 
-            
-            for (int i = start; i < end; i++) {
-                int neighbor = COL_INDS[i];
-                
-                // 检查是否已访问 (需要实现并使用 BITSET_TEST(&visited, neighbor) 或检查 distances)
-                if (BITSET_TEST(&visited, neighbor) == 0) { 
-                    distances[neighbor] = distances[currentNode] + 1;
-                    // 同时标记为 visited，防止在同一层内被重复加入 next_frontier
-                    BITSET_SET(&visited, neighbor); 
-                    
-                    BITSET_SET(&next_frontier, neighbor);
+// Pull 模式（使用相同鄰居列表，拉取檢查）
+void pull_mode(int numVertices, bitset_t* current_frontier, bitset_t* next_frontier, 
+               int* distances, bitset_t* visited, int targetNode) {
+    // 優化：可只遍歷潛在 v (e.g., 所有 current_frontier 的 neigh)，但這裡簡單遍歷所有未訪問
+    for (int v = 0; v < numVertices; v++) {
+        if (distances[v] != -1) continue;  // 已訪問，跳過
+        
+        int min_dist = -1;
+        int start = ROW_PTRS[v];
+        int end = ROW_PTRS[v + 1];
+        for (int i = start; i < end; i++) {
+            int u = COL_INDS[i];  // u 是 v 的鄰居 (無向，等於入邊來源)
+            if (BITSET_TEST(current_frontier, u)) {  // u 在當前層
+                int candidate = distances[u] + 1;
+                if (min_dist == -1 || candidate < min_dist) {
+                    min_dist = candidate;
                 }
             }
         }
-        
-        // --- 层级推进 (Layer Advancement) ---
-
-        // 1. 复制 next_frontier 的内容到 current_frontier
-        // 假设您已实现 BITSET_COPY
-        BITSET_COPY(&current_frontier, &next_frontier); 
-        
-        // 2. 清空 next_frontier，准备接收下一层节点
-        bitset_clear_all(&next_frontier);
-        
-        // 然后继续下一轮外层循环，处理新的 current_frontier
-    }
-
-#if 0
-    while (!isEmpty(q)) {
-        int currentNode = dequeue(q);
-
-        if (currentNode == targetNode) {
-            // 找到目标，释放队列并返回距离
-            // 注意: 完整的内存清理需要释放所有 QNode*，但这里从简
-            return distances[targetNode]; 
-        }
-
-        int start = ROW_PTRS[currentNode];
-        int end = ROW_PTRS[currentNode + 1];
-        
-        for (int i = start; i < end; i++) {
-            //printf("%d ", COL_INDS[i]);
-            int neighbor = COL_INDS[i];
-            if (distances[neighbor] == -1) {
-                distances[neighbor] = distances[currentNode] + 1;
-                enqueue(q, neighbor);
-            }
+        if (min_dist != -1) {
+            distances[v] = min_dist;
+            BITSET_SET(visited, v);
+            BITSET_SET(next_frontier, v);
         }
     }
-#endif
-    // 目标不可达
-    return -1;
 }
 
 // --------------------------- 函数：读取数据文件 ---------------------------
