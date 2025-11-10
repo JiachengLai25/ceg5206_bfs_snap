@@ -480,7 +480,7 @@ void build_csr(int N) {
 // ========================
 // 5. 主程序
 // ========================
-
+#ifndef NO_MAIN
 int main(int argc, char *argv[]) {
     int startUser = 0; 
     int targetUser = 10;
@@ -537,3 +537,4 @@ int main(int argc, char *argv[]) {
 
     return 0;
 }
+#endif

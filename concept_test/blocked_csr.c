@@ -44,7 +44,7 @@ BlockedCSR* build_blocked_csr(int num_vertices, const int *csr_row_ptrs, const i
     int *block_edge_count = (int*)calloc(bcsr->num_blocks, sizeof(int));
     for (int v = 0; v < num_vertices; v++) {
         int block_id = get_block_id(v);
-        int edge_count = cs极_row_ptrs[v+1] - csr_row_ptrs[v];
+        int edge_count = csr_row_ptrs[v+1] - csr_row_ptrs[v];
         block_edge_count[block_id] += edge_count;
     }
 
@@ -58,7 +58,7 @@ BlockedCSR* build_blocked_csr(int num_vertices, const int *csr_row_ptrs, const i
 
     // 5. Fill block_col_inds (rearrange neighbors by block)
     bcsr->block_col_inds = (int*)malloc(bcsr->num_edges * sizeof(int));
-    int *block_write_ptr = (极*)malloc(bcsr->num_blocks * sizeof(int));
+    int *block_write_ptr = (int*)malloc(bcsr->num_blocks * sizeof(int));
     memcpy(block_write_ptr, bcsr->block_row_ptrs, bcsr->num_blocks * sizeof(int));
 
     for (int v = 0; v < num_vertices; v++) {
@@ -175,7 +175,7 @@ int bfs_blocked_csr(BlockedCSR *bcsr, int start, int target, int *distances) {
                                  block_first_v + BLOCK_SIZE - 1;
 
                 // Traverse unvisited vertices in block
-                for (极 v = block_first_v; v <= block_last_v; v++) {
+                for (int v = block_first_v; v <= block_last_v; v++) {
                     if (distances[v] != -1) continue;
 
                     // Check if v's neighbors are in current frontier
