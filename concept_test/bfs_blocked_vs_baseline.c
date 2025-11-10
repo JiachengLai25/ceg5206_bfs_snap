@@ -264,3 +264,4 @@ int main(int argc,char**argv){
     free_bcsr(B); free(G.rowptr); free(G.colind);
     return 0;
 }
+
