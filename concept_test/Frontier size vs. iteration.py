@@ -6,71 +6,71 @@ import pandas as pd
 
 def simulate_bfs_frontier_trajectory():
     """
-    模拟BFS算法中Push和Pull模式下的Frontier size变化轨迹
-    基于真实的BFS算法行为进行模拟
+    Simulate the trajectory of Frontier size variation under Push and Pull modes in the BFS algorithm.
+    This simulation is based on realistic BFS algorithm behavior.
     """
-    # 设置随机种子以保证结果可重现
+    # Set random seed for reproducibility
     np.random.seed(42)
     
-    # 模拟参数
+    # Simulation parameters
     total_nodes = 10000
     max_iterations = 20
-    density_threshold = 0.05  # Push/Pull切换阈值
+    density_threshold = 0.05  # Threshold for switching between Push and Pull modes
     
-    # 初始化数据存储
+    # Initialize data storage
     iterations = []
     frontier_sizes = []
     modes = []
     densities = []
     
-    # 模拟BFS过程
-    current_frontier_size = 1  # 起始节点
+    # Simulate BFS process
+    current_frontier_size = 1  # Starting node
     iteration = 0
     
     while current_frontier_size > 0 and iteration < max_iterations:
-        # 计算当前前沿的边密度（模拟）
+        # Compute the current frontier edge density (simulated)
         if iteration == 0:
-            current_density = 0.001  # 初始很低
+            current_density = 0.001  # Very low initially
         else:
-            # 密度随迭代变化：先增长后下降
+            # Density increases first and then decreases with iteration
             peak_iteration = max_iterations // 3
             if iteration < peak_iteration:
                 current_density = min(0.15, 0.001 * (2 ** iteration))
             else:
                 current_density = max(0.001, 0.15 * (0.7 ** (iteration - peak_iteration)))
         
-        # 根据密度决定模式
+        # Determine mode based on density
         if current_density < density_threshold:
             mode = "Push"
-            # Push模式下前沿增长较慢（处理稀疏图）
+            # In Push mode, frontier grows more slowly (for sparse graphs)
             if iteration < 5:
                 growth_factor = np.random.normal(2.5, 0.3)
             else:
                 growth_factor = np.random.normal(1.8, 0.2)
         else:
-            mode = "Pull" 
-            # Pull模式下前沿可能收缩（处理稠密图）
+            mode = "Pull"
+            # In Pull mode, frontier may shrink (for dense graphs)
             growth_factor = np.random.normal(0.7, 0.15)
         
-        # 添加噪声和随机性
+        # Add noise and randomness
         noise = np.random.normal(1, 0.1)
         growth_factor *= noise
         
-        # 计算新的前沿大小（限制在合理范围内）
+        # Compute new frontier size (bounded within a reasonable range)
         new_frontier_size = int(current_frontier_size * growth_factor)
         new_frontier_size = max(1, min(total_nodes * 0.8, new_frontier_size))
         
-        # 记录数据
+        # Record data
         iterations.append(iteration)
         frontier_sizes.append(current_frontier_size)
         modes.append(mode)
         densities.append(current_density)
         
-        # 为下一次迭代更新
+        # Update for next iteration
         current_frontier_size = new_frontier_size
         iteration += 1
     
-    # 创建DataFrame
+    # Create DataFrame
     df = pd.DataFrame({
         'Iteration': iterations,
         'Frontier_Size': frontier_sizes,
@@ -82,16 +82,16 @@ def simulate_bfs_frontier_trajectory():
 
 def plot_frontier_trajectory(df):
     """
-    绘制Frontier size随迭代变化的轨迹图
+    Plot the trajectory of Frontier size variation over iterations.
     """
-    # 设置绘图风格
+    # Set plot style
     plt.style.use('seaborn-v0_8')
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
     
-    # 颜色映射
+    # Color mapping
     colors = {'Push': '#2E86AB', 'Pull': '#A23B72'}
     
-    # 主图：Frontier size轨迹
+    # Main plot: Frontier size trajectory
     for mode in ['Push', 'Pull']:
         mask = df['Mode'] == mode
         ax1.plot(df[mask]['Iteration'], df[mask]['Frontier_Size'], 
@@ -102,11 +102,11 @@ def plot_frontier_trajectory(df):
     ax1.set_ylabel('Frontier Size', fontsize=14, fontweight='bold')
     ax1.set_title('BFS Frontier Size vs. Iteration\n(Push vs. Pull Mode Trajectory)', 
                  fontsize=16, fontweight='bold', pad=20)
-    ax1.set_yscale('log')  # 对数尺度更好地显示变化
+    ax1.set_yscale('log')  # Log scale for better visibility
     ax1.grid(True, alpha=0.3)
     ax1.legend(fontsize=12)
     
-    # 添加模式切换的标注
+    # Annotate mode switching
     for i in range(1, len(df)):
         if df['Mode'].iloc[i] != df['Mode'].iloc[i-1]:
             ax1.annotate(f'{df["Mode"].iloc[i]} Mode', 
@@ -115,16 +115,16 @@ def plot_frontier_trajectory(df):
                         arrowprops=dict(arrowstyle='->', color='red', alpha=0.7),
                         fontsize=10, fontweight='bold', color='red')
     
-    # 子图：密度和模式关系
+    # Subplot: Density and mode relationship
     ax2b = ax2.twinx()
     
-    # 密度曲线
+    # Density curve
     ax2.plot(df['Iteration'], df['Density'], color='#F18F01', 
             linewidth=2, marker='s', markersize=6, label='Frontier Density')
     ax2.axhline(y=0.05, color='red', linestyle='--', alpha=0.7, 
                label='Density Threshold (0.05)')
     
-    # 模式背景色
+    # Mode background shading
     for i in range(len(df) - 1):
         mode = df['Mode'].iloc[i]
         ax2b.axvspan(df['Iteration'].iloc[i], df['Iteration'].iloc[i+1], 
@@ -135,7 +135,7 @@ def plot_frontier_trajectory(df):
     ax2.set_title('Frontier Density and Mode Switching', fontsize=14, fontweight='bold')
     ax2.grid(True, alpha=0.3)
     
-    # 创建图例
+    # Create legend
     lines1, labels1 = ax2.get_legend_handles_labels()
     patches = [Patch(color=colors['Push'], alpha=0.3, label='Push Mode'),
               Patch(color=colors['Pull'], alpha=0.3, label='Pull Mode')]
@@ -147,32 +147,32 @@ def plot_frontier_trajectory(df):
 
 def create_comparison_analysis(df):
     """
-    创建统计比较分析
+    Create statistical comparison analysis.
     """
-    # 模式统计
+    # Mode statistics
     mode_stats = df.groupby('Mode').agg({
         'Frontier_Size': ['mean', 'std', 'max'],
         'Iteration': 'count'
     }).round(2)
     
-    # 性能指标计算
+    # Performance indicators
     total_iterations = len(df)
     push_iterations = len(df[df['Mode'] == 'Push'])
     pull_iterations = len(df[df['Mode'] == 'Pull'])
     
-    print("=== BFS Frontier轨迹分析 ===")
-    print(f"总迭代次数: {total_iterations}")
-    print(f"Push模式迭代: {push_iterations} ({push_iterations/total_iterations*100:.1f}%)")
-    print(f"Pull模式迭代: {pull_iterations} ({pull_iterations/total_iterations*100:.1f}%)")
-    print(f"模式切换次数: {len(df[df['Mode'] != df['Mode'].shift()]) - 1}")
-    print("\n各模式统计:")
+    print("=== BFS Frontier Trajectory Analysis ===")
+    print(f"Total iterations: {total_iterations}")
+    print(f"Push mode iterations: {push_iterations} ({push_iterations/total_iterations*100:.1f}%)")
+    print(f"Pull mode iterations: {pull_iterations} ({pull_iterations/total_iterations*100:.1f}%)")
+    print(f"Mode switch count: {len(df[df['Mode'] != df['Mode'].shift()]) - 1}")
+    print("\nMode statistics:")
     print(mode_stats)
     
     return mode_stats
 
 def create_animated_frontier_plot(df):
     """
-    创建动态前沿变化图（可选）
+    Create an animated plot of frontier evolution (optional).
     """
     from matplotlib.animation import FuncAnimation
     
@@ -202,52 +202,52 @@ def create_animated_frontier_plot(df):
         
         return ax
     
-    # 注释掉动画创建以避免在静态环境中运行
+    # Animation generation is commented out to prevent issues in static environments
     # anim = FuncAnimation(fig, update, frames=len(df), interval=500, repeat=False)
     plt.close()
     
-    return "动画功能已准备（在实际环境中取消注释相关代码）"
+    return "Animation functionality prepared (uncomment related code to run in an interactive environment)"
 
-# 主执行函数
+# Main execution function
 def main():
-    """主执行函数"""
-    print("生成BFS Frontier轨迹数据...")
+    """Main execution function"""
+    print("Generating BFS Frontier trajectory data...")
     
-    # 生成模拟数据
+    # Generate simulated data
     df = simulate_bfs_frontier_trajectory()
     
-    # 绘制轨迹图
-    print("绘制轨迹图...")
+    # Plot trajectory
+    print("Plotting trajectory...")
     fig = plot_frontier_trajectory(df)
     
-    # 统计分析
+    # Statistical analysis
     stats = create_comparison_analysis(df)
     
-    # 保存图表
+    # Save charts
     plt.savefig('bfs_frontier_trajectory.png', dpi=300, bbox_inches='tight')
     plt.savefig('bfs_frontier_trajectory.pdf', bbox_inches='tight')
     
-    # 显示图表
+    # Display chart
     plt.show()
     
-    # 保存数据
+    # Save data
     df.to_csv('bfs_frontier_data.csv', index=False)
     
-    print("\n图表已保存为 'bfs_frontier_trajectory.png'")
-    print("数据已保存为 'bfs_frontier_data.csv'")
+    print("\nChart saved as 'bfs_frontier_trajectory.png'")
+    print("Data saved as 'bfs_frontier_data.csv'")
     
     return df, fig, stats
 
-# 可选：创建不同参数下的对比图
+# Optional: create comparison under different parameters
 def create_parameter_comparison():
-    """创建不同参数下的对比图"""
+    """Create comparison plots under different parameters"""
     fig, axes = plt.subplots(2, 2, figsize=(15, 12))
     axes = axes.flatten()
     
     density_thresholds = [0.01, 0.05, 0.1, 0.2]
     
     for i, threshold in enumerate(density_thresholds):
-        np.random.seed(42)  # 保持其他参数一致
+        np.random.seed(42)  # Keep other parameters consistent
         df = simulate_bfs_frontier_trajectory()
         
         colors = {'Push': '#2E86AB', 'Pull': '#A23B72'}
@@ -271,8 +271,8 @@ def create_parameter_comparison():
     plt.show()
 
 if __name__ == "__main__":
-    # 运行主程序
+    # Run main program
     df, fig, stats = main()
     
-    # 可选：运行参数比较
+    # Optional: run parameter comparison
     # create_parameter_comparison()
